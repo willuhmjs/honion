@@ -67,8 +67,8 @@ impl Harness {
     /// entirely, cudarc panics rather than erroring, so a driverless machine
     /// would fail the suite instead of skipping it.
     fn with_defines(defines: &[(&str, String)]) -> Option<Self> {
-        if !unsafe { cudarc::driver::sys::is_culib_present() } {
-            eprintln!("skipping: NVIDIA driver (libcuda) not present");
+        if !honion_gpu::search::cuda::driver_present() {
+            eprintln!("skipping: no CUDA driver library present");
             return None;
         }
         let ctx = match CudaContext::new(0) {

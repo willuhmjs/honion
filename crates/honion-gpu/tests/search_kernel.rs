@@ -24,19 +24,13 @@ use honion_gpu::{DeviceTables, SearchError, Searcher};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
-/// Whether the NVIDIA driver library can be loaded at all. Without this
-/// guard a driverless machine *panics* inside cudarc (`panic_no_lib_found`)
-/// instead of getting an `Err`, failing the suite rather than skipping it.
-fn driver_present() -> bool {
-    // SAFETY: probes for the presence of the driver library only; nothing is
-    // called through it.
-    unsafe { cudarc::driver::sys::is_culib_present() }
-}
-
 /// Whether a CUDA device is usable; tests no-op without one.
 fn have_gpu() -> bool {
-    if !driver_present() {
-        eprintln!("skipping: NVIDIA driver (libcuda) not present");
+    // Ask before touching cudarc: with no driver library installed it panics
+    // out of a `OnceLock` initialiser rather than returning an error, so the
+    // `Err` arm below never gets the chance to report "no device".
+    if !honion_gpu::search::cuda::driver_present() {
+        eprintln!("skipping: no CUDA driver library present");
         return false;
     }
     match CudaContext::new(0) {

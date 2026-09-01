@@ -497,10 +497,14 @@ fn search_device(
     let mut searcher = Searcher::new(device, tables, threads, args.offsets, max_hits)
         .with_context(|| format!("preparing the GPU search on device {device}"))?;
     if !args.quiet {
-        let (major, minor) = searcher.compute_capability().unwrap_or((0, 0));
-        let name = searcher.name().unwrap_or_default();
+        // Cosmetic, so a failed query degrades to a placeholder instead of
+        // aborting a search that is otherwise working -- and backend-neutral,
+        // so the Metal backend describes itself the same way.
+        let info = searcher
+            .device_info()
+            .unwrap_or_else(|_| honion_gpu::DeviceInfo::unknown());
         eprintln!(
-            "  device {device} ({name}) compute capability {major}.{minor}, {} threads, \
+            "  device {device}: {info}, {} threads, \
              {} offsets ({} candidates per inversion, {:.1} GB device memory)",
             searcher.num_threads(),
             searcher.half(),
