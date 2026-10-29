@@ -12,12 +12,16 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
 license = "MIT OR Apache-2.0"
-repository = "https://github.com/Splinters-io/honion"
+repository = "https://github.com/willuhmjs/honion"
 
 [workspace.dependencies]
-honion-core = { path = "crates/honion-core" }
-honion-gpu = { path = "crates/honion-gpu" }
-honion-keyfile = { path = "crates/honion-keyfile" }
+# Internal path deps carry an explicit version so `cargo publish` works;
+# publish order is honion-core, then honion-gpu and honion-keyfile, then
+# honion-cli (crates.io rejects a version bump whose dependencies are not
+# yet published).
+honion-core = { path = "crates/honion-core", version = "0.1.0" }
+honion-gpu = { path = "crates/honion-gpu", version = "0.1.0" }
+honion-keyfile = { path = "crates/honion-keyfile", version = "0.1.0" }
 
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }

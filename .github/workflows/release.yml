@@ -1,0 +1,48 @@
+# Release binaries on tag: honion needs no CUDA toolkit at build *or* install
+# — libcuda and libnvrtc are dlopened at run time — so a stock ubuntu-latest
+# build is a broadly portable Linux x86-64 binary. The runtime contract is
+# documented in the README: an NVIDIA driver plus libnvrtc 13.x on the host.
+
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Build
+        run: cargo build --workspace --release
+
+      - name: Package
+        id: package
+        run: |
+          set -euo pipefail
+          v=${GITHUB_REF_NAME}
+          name=honion-$v-linux-x86_64
+          mkdir -p "$name"
+          cp target/release/honion "$name/"
+          cp README.md LICENSE-APACHE LICENSE-MIT "$name/"
+          tar czf "$name.tar.gz" "$name"
+          sha256sum "$name.tar.gz" > "$name.tar.gz.sha256"
+          echo "archive=$name.tar.gz" >> "$GITHUB_OUTPUT"
+
+      - name: Smoke
+        run: ./target/release/honion estimate --prefix carroll
+
+      - name: Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            ${{ steps.package.outputs.archive }}
+            ${{ steps.package.outputs.archive }}.sha256

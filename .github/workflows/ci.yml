@@ -1,0 +1,80 @@
+# CI for a workspace whose GPU half degrades gracefully off a GPU:
+# honion-core, honion-keyfile and the CLI's pure logic run everywhere, and
+# honion-gpu's kernels tests skip (not fail) when the driver is absent — the
+# harnesses probe `is_culib_present` first, because cudarc *panics* rather
+# than errors when libcuda.so cannot be loaded at all.
+#
+# The GPU tests themselves — the differential suites that gate the field
+# arithmetic — only truly execute on a machine with an NVIDIA card. Add a
+# self-hosted runner with the driver installed and the `gpu` job below picks
+# them up automatically; nothing else changes.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      # Edition 2024 / rust-version 1.85: hold CI to the declared floor so a
+      # new language feature can't sneak in and silently break the MSRV.
+      - uses: dtolnay/rust-toolchain@1.85.0
+        with:
+          components: rustfmt, clippy
+
+      - name: Format
+        run: cargo fmt --all --check
+
+      - name: Clippy
+        # The workspace lints (missing_docs warns, unwrap/panic/indexing
+        # warn) are already clean, so escalate to hard failures here.
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # Without libcuda the GPU tests print "skipping: ..." and pass; with a
+      # driver but no device they skip via CudaContext::new's Err path.
+      - name: Test
+        run: cargo test --workspace
+
+      - name: Docs
+        run: cargo doc --workspace --no-deps
+
+      - name: Build
+        run: cargo build --workspace --release
+
+      # The release binary runs its CPU-only subcommands (estimate, verify)
+      # with no CUDA present — a smoke test that shipped artifacts at least
+      # start and parse arguments.
+      - name: Smoke
+        run: |
+          ./target/release/honion estimate --prefix carroll
+          ./target/release/honion --help > /dev/null
+
+  # Runs only when a self-hosted runner with an NVIDIA driver + card is
+  # attached; the regular jobs above still gate every PR.
+  gpu:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, gpu]
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: GPU tests
+        run: cargo test --workspace --release
