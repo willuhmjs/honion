@@ -63,9 +63,14 @@ permanently compromised service.
 `SecretScalar` has no derived `PartialEq`, deliberately: a derived comparison
 would compare secret bytes in variable time.
 
-**Not addressed:** the scalar buffer is not `mlock`ed, so it can in principle
-reach swap. On a machine with encrypted swap or none, this is moot. It is listed
-here rather than silently omitted.
+**Addressed as of this fork:** the epoch scalar buffers are `mlock`ed and
+`madvise`d with `MADV_DONTDUMP` (crates/honion-cli/src/secure_mem.rs), which
+keeps them out of swap and out of core dumps respectively. `mlock` fails
+against `RLIMIT_MEMLOCK` (commonly 8 MB) on hardened defaults, so a failure
+warns once with the limit and the fix rather than refusing to run — this is
+defence in depth, not a boundary. `PR_SET_DUMPABLE 0`, which would additionally
+block same-uid ptrace but also break cuda-gdb and Nsight, is behind
+`--paranoid`. On a machine with encrypted swap or none, the warning is moot.
 
 ## Entropy
 

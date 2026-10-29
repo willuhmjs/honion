@@ -20,6 +20,7 @@
 mod patterns;
 mod progress;
 mod search;
+mod secure_mem;
 
 use std::path::PathBuf;
 

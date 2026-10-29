@@ -377,6 +377,7 @@ dependencies = [
  "honion-core",
  "honion-gpu",
  "honion-keyfile",
+ "libc",
  "rayon",
  "thiserror",
 ]

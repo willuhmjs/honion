@@ -14,6 +14,7 @@ use rayon::prelude::*;
 
 use crate::patterns::{self, SourcedPattern};
 use crate::progress::{Progress, humantime, si};
+use crate::secure_mem;
 
 /// Default number of precomputed offsets.
 ///
@@ -107,6 +108,14 @@ pub struct SearchArgs {
     /// Suppress progress output.
     #[arg(long, short)]
     quiet: bool,
+
+    /// Clear PR_SET_DUMPABLE for the whole process: no core dumps, and no
+    /// same-uid ptrace either. The epoch scalars are already kept out of
+    /// core dumps via MADV_DONTDUMP; this widens it to everything, at the
+    /// cost of breaking cuda-gdb and Nsight attach. For runs measured in
+    /// days, the trade is usually worth it.
+    #[arg(long)]
+    paranoid: bool,
 }
 
 /// Arguments to `honion estimate`.
@@ -209,6 +218,9 @@ struct Shared {
 /// If patterns are malformed, the prefilter is too weak, no GPU is available,
 /// or a result cannot be written.
 pub fn run_search(args: &SearchArgs) -> Result<()> {
+    if args.paranoid {
+        secure_mem::forbid_core_dump();
+    }
     let sourced = collect(&args.prefixes, args.patterns_file.as_ref())?;
     let set = compile(&sourced)?;
     let tables = DeviceTables::build(&set);
@@ -583,12 +595,18 @@ pub fn run_estimate(args: &EstimateArgs) -> Result<()> {
 }
 
 /// Draw one clamped secret scalar per thread from the system CSPRNG.
+///
+/// The buffer is locked against swap on the way out (see `secure_mem`); the
+/// scalars themselves zeroize on drop and never leave this process's CPU
+/// side, so this closes the last window docs/05 left open.
 fn draw_scalars(threads: u32) -> Result<Vec<SecretScalar>> {
-    (0..threads)
+    let scalars = (0..threads)
         .into_par_iter()
         .map(|_| SecretScalar::generate())
         .collect::<Result<Vec<_>, _>>()
-        .context("drawing secret scalars from the system CSPRNG")
+        .context("drawing secret scalars from the system CSPRNG")?;
+    secure_mem::lock_secret_buffer(&scalars);
+    Ok(scalars)
 }
 
 /// The public keys of those scalars. Only these reach the device.
