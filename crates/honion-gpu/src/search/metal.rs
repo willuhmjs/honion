@@ -129,6 +129,13 @@ fn check_device(device: u32) -> Result<(), SearchError> {
     Ok(())
 }
 
+/// Choose a thread count that fits comfortably in the device's recommended
+/// working set, in the same shape as the CUDA backend's: walk count grows
+/// with room for their threadgroups, clamped where occupancy plateaus.
+///
+/// # Errors
+///
+/// If no Metal device is present.
 pub fn auto_threads(device: u32, half: u32) -> Result<u32, SearchError> {
     check_device(device)?;
     let device = MTLCreateSystemDefaultDevice()
