@@ -14,18 +14,31 @@
 //!   time; a spurious one means a bug the verifier would have to catch. Neither
 //!   is acceptable, so the test demands exact agreement rather than containment.
 
+use cudarc::driver::{CudaContext, CudaSlice, LaunchConfig, PushKernelArg};
 use curve25519_dalek::constants::ED25519_BASEPOINT_POINT;
 use curve25519_dalek::edwards::EdwardsPoint;
 use curve25519_dalek::scalar::Scalar;
-use cudarc::driver::{CudaContext, CudaSlice, LaunchConfig, PushKernelArg};
 use honion_core::address::OnionAddress;
 use honion_core::pattern::{Pattern, PatternSet};
 use honion_gpu::{DeviceTables, SearchError, Searcher};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
+/// Whether the NVIDIA driver library can be loaded at all. Without this
+/// guard a driverless machine *panics* inside cudarc (`panic_no_lib_found`)
+/// instead of getting an `Err`, failing the suite rather than skipping it.
+fn driver_present() -> bool {
+    // SAFETY: probes for the presence of the driver library only; nothing is
+    // called through it.
+    unsafe { cudarc::driver::sys::is_culib_present() }
+}
+
 /// Whether a CUDA device is usable; tests no-op without one.
 fn have_gpu() -> bool {
+    if !driver_present() {
+        eprintln!("skipping: NVIDIA driver (libcuda) not present");
+        return false;
+    }
     match CudaContext::new(0) {
         Ok(_) => true,
         Err(e) => {
@@ -169,7 +182,9 @@ fn finds_a_planted_needle() {
 
     let needle_scalar =
         scalars[NEEDLE_THREAD] - Scalar::from(8u64) * Scalar::from(NEEDLE_OFFSET.unsigned_abs());
-    let needle_key = (ED25519_BASEPOINT_POINT * needle_scalar).compress().to_bytes();
+    let needle_key = (ED25519_BASEPOINT_POINT * needle_scalar)
+        .compress()
+        .to_bytes();
 
     // A ten-character prefix of the needle's own address. Long enough that a
     // second, coincidental match in 102 400 keys is essentially impossible.
@@ -189,8 +204,15 @@ fn finds_a_planted_needle() {
         outcome.total_found
     );
     let hit = outcome.hits[0];
-    assert_eq!(hit.thread_id as usize, NEEDLE_THREAD, "wrong thread reported");
-    assert_eq!(i64::from(hit.offset), NEEDLE_OFFSET, "wrong offset reported");
+    assert_eq!(
+        hit.thread_id as usize, NEEDLE_THREAD,
+        "wrong thread reported"
+    );
+    assert_eq!(
+        i64::from(hit.offset),
+        NEEDLE_OFFSET,
+        "wrong offset reported"
+    );
 
     // Reconstruct the secret exactly as the real verifier will, and confirm it
     // reproduces the address we searched for.
@@ -203,7 +225,9 @@ fn finds_a_planted_needle() {
     let recovered_key = (ED25519_BASEPOINT_POINT * recovered).compress().to_bytes();
     assert_eq!(recovered_key, needle_key);
     assert!(
-        OnionAddress::from_pubkey(&recovered_key).body().starts_with(&prefix),
+        OnionAddress::from_pubkey(&recovered_key)
+            .body()
+            .starts_with(&prefix),
         "reconstructed key does not have the prefix we searched for"
     );
 }
@@ -250,7 +274,8 @@ fn assert_device_agrees_with_host(pattern_src: &str, threads: u32, candidates: u
     host.sort_unstable();
 
     assert_eq!(
-        device, host,
+        device,
+        host,
         "device and host reference disagree for pattern {pattern_src:?} \
          (half {half}); device found {} hits, host found {}",
         device.len(),
@@ -471,8 +496,7 @@ fn two_searchers_coexist_on_one_device() {
             "seed {seed}: expected exactly the needle"
         );
         assert_eq!(
-            found.hits[0].thread_id as usize,
-            NEEDLE_THREAD,
+            found.hits[0].thread_id as usize, NEEDLE_THREAD,
             "seed {seed}"
         );
         assert_eq!(

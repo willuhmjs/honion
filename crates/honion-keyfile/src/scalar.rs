@@ -70,9 +70,9 @@ impl SecretScalar {
     /// Force arbitrary bytes into clamped form.
     #[must_use]
     pub fn clamp(mut bytes: [u8; SCALAR_LEN]) -> Self {
-        bytes[0] &= 248;  // clear the low three bits: the scalar is a multiple of 8
+        bytes[0] &= 248; // clear the low three bits: the scalar is a multiple of 8
         bytes[31] &= 127; // clear bit 255
-        bytes[31] |= 64;  // set bit 254
+        bytes[31] |= 64; // set bit 254
         Self { bytes }
     }
 
@@ -100,7 +100,9 @@ impl SecretScalar {
     /// The public key `scalar * B`, compressed.
     #[must_use]
     pub fn public_key(&self) -> [u8; PUBKEY_LEN] {
-        (ED25519_BASEPOINT_POINT * self.as_dalek()).compress().to_bytes()
+        (ED25519_BASEPOINT_POINT * self.as_dalek())
+            .compress()
+            .to_bytes()
     }
 
     /// As a reduced `dalek` scalar.
@@ -182,7 +184,9 @@ pub enum ScalarError {
     #[error("could not read from the system random source: {0}")]
     Random(String),
     /// Bytes were not in clamped form.
-    #[error("scalar is not in clamped form (low three bits must be clear, bit 254 set, bit 255 clear)")]
+    #[error(
+        "scalar is not in clamped form (low three bits must be clear, bit 254 set, bit 255 clear)"
+    )]
     NotClamped,
     /// `self + 8m` left the clamped range.
     #[error(
@@ -305,8 +309,16 @@ mod tests {
         ));
 
         // A scalar in the middle of the range is unaffected in either direction.
-        assert!(SecretScalar::clamp([0x40; SCALAR_LEN]).offset(1 << 30).is_ok());
-        assert!(SecretScalar::clamp([0x40; SCALAR_LEN]).offset(-(1 << 30)).is_ok());
+        assert!(
+            SecretScalar::clamp([0x40; SCALAR_LEN])
+                .offset(1 << 30)
+                .is_ok()
+        );
+        assert!(
+            SecretScalar::clamp([0x40; SCALAR_LEN])
+                .offset(-(1 << 30))
+                .is_ok()
+        );
     }
 
     #[test]

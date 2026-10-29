@@ -26,7 +26,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     ] {
         let t = std::time::Instant::now();
         let ptx = honion_gpu::nvrtc::compile(src, arch, &[])?;
-        println!("{name:<16} {:>8.2?}  {:>6} KB PTX", t.elapsed(), ptx.len() / 1024);
+        println!(
+            "{name:<16} {:>8.2?}  {:>6} KB PTX",
+            t.elapsed(),
+            ptx.len() / 1024
+        );
     }
     Ok(())
 }

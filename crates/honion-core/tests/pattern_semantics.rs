@@ -13,7 +13,12 @@
 
 // Integration tests are separate crates, so the `cfg(test)` relaxation in the
 // library does not reach them; the same reasoning applies here.
-#![allow(clippy::indexing_slicing, clippy::panic, clippy::unwrap_used, clippy::expect_used)]
+#![allow(
+    clippy::indexing_slicing,
+    clippy::panic,
+    clippy::unwrap_used,
+    clippy::expect_used
+)]
 
 use honion_core::address::{OnionAddress, PUBKEY_LEN};
 use honion_core::base32::Base32Char;
@@ -28,7 +33,9 @@ use proptest::prelude::*;
 fn text_matches(pattern: &Pattern, address: &OnionAddress) -> bool {
     let body = address.body().as_bytes();
     pattern.atoms().iter().enumerate().all(|(i, atom)| {
-        let Some(&byte) = body.get(i) else { return false };
+        let Some(&byte) = body.get(i) else {
+            return false;
+        };
         let Some(c) = Base32Char::from_ascii(byte) else {
             return false;
         };
@@ -168,10 +175,9 @@ fn all_wildcards_matches_everything() {
 /// predicate against data this project did not produce.
 #[test]
 fn real_vanity_address_matches_its_prefix() {
-    let address = OnionAddress::parse(
-        "duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion",
-    )
-    .expect("valid address");
+    let address =
+        OnionAddress::parse("duckduckgogg42xjoc72x3sjasowoarfbgcmvfimaftt6twagswzczad.onion")
+            .expect("valid address");
     let pattern = Pattern::parse("duckduckgo").expect("valid pattern");
     let compiled = CompiledPattern::compile(&pattern);
     assert!(compiled.matches_pubkey(address.pubkey()));

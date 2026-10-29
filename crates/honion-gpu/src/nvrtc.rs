@@ -131,7 +131,11 @@ fn expand_includes(source: &str) -> Result<String, NvrtcError> {
 ///
 /// Returns the compiler log on failure, which is the only useful diagnostic
 /// NVRTC provides.
-pub fn compile(source: &str, arch: (u32, u32), defines: &[(&str, String)]) -> Result<String, NvrtcError> {
+pub fn compile(
+    source: &str,
+    arch: (u32, u32),
+    defines: &[(&str, String)],
+) -> Result<String, NvrtcError> {
     compile_with_options(source, arch, defines, &[])
 }
 
@@ -237,7 +241,9 @@ pub fn compile_cached(
         && !ptx.is_empty()
     {
         if let Ok(mut guard) = CACHE.lock() {
-            guard.get_or_insert_with(BTreeMap::new).insert(key, ptx.clone());
+            guard
+                .get_or_insert_with(BTreeMap::new)
+                .insert(key, ptx.clone());
         }
         return Ok(ptx);
     }
@@ -258,7 +264,9 @@ pub fn compile_cached(
     }
 
     if let Ok(mut guard) = CACHE.lock() {
-        guard.get_or_insert_with(BTreeMap::new).insert(key, ptx.clone());
+        guard
+            .get_or_insert_with(BTreeMap::new)
+            .insert(key, ptx.clone());
     }
     Ok(ptx)
 }

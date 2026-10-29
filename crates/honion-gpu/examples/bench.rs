@@ -6,17 +6,35 @@ use honion_gpu::{DeviceTables, Searcher};
 use std::time::Instant;
 
 fn main() {
-    let half: u32 = std::env::var("HALF").ok().and_then(|v| v.parse().ok()).unwrap_or(128);
-    let device: u32 = std::env::var("DEVICE").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
-    let threads: u32 = std::env::var("THREADS").ok().and_then(|v| v.parse().ok()).unwrap_or(1 << 18);
-    let iters: u32 = std::env::var("ITERS").ok().and_then(|v| v.parse().ok()).unwrap_or(2048);
+    let half: u32 = std::env::var("HALF")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(128);
+    let device: u32 = std::env::var("DEVICE")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    let threads: u32 = std::env::var("THREADS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1 << 18);
+    let iters: u32 = std::env::var("ITERS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(2048);
 
     let t0 = Instant::now();
     let ptx = honion_gpu::nvrtc::compile(
-        honion_gpu::nvrtc::sources::SEARCH, (12, 0),
+        honion_gpu::nvrtc::sources::SEARCH,
+        (12, 0),
         &[("HALF", half.to_string()), ("FE_RADIX32", "1".to_owned())],
-    ).expect("compile");
-    println!("nvrtc compile      : {:>8.2?}  ({} KB PTX)", t0.elapsed(), ptx.len() / 1024);
+    )
+    .expect("compile");
+    println!(
+        "nvrtc compile      : {:>8.2?}  ({} KB PTX)",
+        t0.elapsed(),
+        ptx.len() / 1024
+    );
 
     // A 12-character pattern: effectively unfindable, so the hot loop is never
     // disturbed by hits and the number measured is pure search throughput.
@@ -41,7 +59,10 @@ fn main() {
 
     // Repeat launches back-to-back, so a rate that only holds from an idle GPU
     // is visible as a decay rather than reported as the headline number.
-    let reps: usize = std::env::var("REPS").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
+    let reps: usize = std::env::var("REPS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1);
     for r in 0..reps {
         let t2 = Instant::now();
         let out = s.launch(iters).expect("launch");
@@ -49,7 +70,10 @@ fn main() {
         let rate = out.examined as f64 / dt.as_secs_f64();
         println!(
             "half {half:>4} threads {threads:>7} cands {iters:>6} rep {:>2} : {:>7.2?}  {:.3} G addr/s  ({} hits)",
-            r + 1, dt, rate / 1e9, out.total_found
+            r + 1,
+            dt,
+            rate / 1e9,
+            out.total_found
         );
     }
 }

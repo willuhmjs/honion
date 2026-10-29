@@ -229,7 +229,10 @@ impl Searcher {
         let ptx = nvrtc::compile_cached(
             nvrtc::sources::SEARCH,
             (major.max(0) as u32, minor.max(0) as u32),
-            &[("HALF", half.to_string()), ("FE_RADIX32", FE_RADIX32.to_owned())],
+            &[
+                ("HALF", half.to_string()),
+                ("FE_RADIX32", FE_RADIX32.to_owned()),
+            ],
         )?;
         let module = ctx
             .load_module(ptx.into())
@@ -308,7 +311,8 @@ impl Searcher {
             if st.first().copied().unwrap_or(0) != 0 {
                 return Err(SearchError::Device(
                     "building the offset table hit a singular point; \
-                     this indicates a field-arithmetic fault".into(),
+                     this indicates a field-arithmetic fault"
+                        .into(),
                 ));
             }
         }
@@ -554,9 +558,7 @@ impl Searcher {
         Ok(LaunchOutcome {
             hits,
             total_found,
-            examined: u64::from(self.num_threads)
-                * u64::from(num_batches)
-                * u64::from(per_batch),
+            examined: u64::from(self.num_threads) * u64::from(num_batches) * u64::from(per_batch),
         })
     }
 }

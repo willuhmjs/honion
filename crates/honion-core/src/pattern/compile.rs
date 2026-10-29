@@ -268,7 +268,11 @@ impl PatternSet {
         // makes runs reproducible and the PTX cache key meaningful.
         let mut by_mask: BTreeMap<u64, BTreeMap<u64, Vec<u32>>> = BTreeMap::new();
         for (index, c) in compiled.iter().enumerate() {
-            let slot = by_mask.entry(c.mask()).or_default().entry(c.target()).or_default();
+            let slot = by_mask
+                .entry(c.mask())
+                .or_default()
+                .entry(c.target())
+                .or_default();
             slot.push(u32::try_from(index).unwrap_or(u32::MAX));
         }
 
@@ -464,7 +468,10 @@ mod tests {
         assert_eq!(set.groups().len(), 2);
         // Targets within a group are sorted, so the device can binary-search.
         for g in set.groups() {
-            assert!(g.targets().windows(2).all(|w| w[0] < w[1]), "targets sorted");
+            assert!(
+                g.targets().windows(2).all(|w| w[0] < w[1]),
+                "targets sorted"
+            );
         }
         // Note both groups happen to have 15 mask bits ("xy?z" also fixes
         // three characters), so the group must be selected by mask *value*.

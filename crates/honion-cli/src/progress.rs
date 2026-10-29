@@ -109,13 +109,7 @@ impl Progress {
 /// Format a count with an SI suffix.
 #[must_use]
 pub fn si(v: f64) -> String {
-    const UNITS: [(&str, f64); 5] = [
-        ("P", 1e15),
-        ("T", 1e12),
-        ("G", 1e9),
-        ("M", 1e6),
-        ("k", 1e3),
-    ];
+    const UNITS: [(&str, f64); 5] = [("P", 1e15), ("T", 1e12), ("G", 1e9), ("M", 1e6), ("k", 1e3)];
     for (suffix, scale) in UNITS {
         if v >= scale {
             return format!("{:.2}{suffix}", v / scale);

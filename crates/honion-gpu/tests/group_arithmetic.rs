@@ -15,10 +15,10 @@
 //!   additions would indicate a field-arithmetic bug that short tests miss.
 //!   The walk is therefore run long enough to accumulate any such drift.
 
+use cudarc::driver::{CudaContext, CudaSlice, LaunchConfig, PushKernelArg};
 use curve25519_dalek::constants::ED25519_BASEPOINT_POINT;
 use curve25519_dalek::edwards::CompressedEdwardsY;
 use curve25519_dalek::scalar::Scalar;
-use cudarc::driver::{CudaContext, CudaSlice, LaunchConfig, PushKernelArg};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::sync::Arc;
@@ -30,6 +30,13 @@ struct Harness {
 
 impl Harness {
     fn new() -> Option<Self> {
+        // Guard: with the driver library absent entirely, cudarc panics
+        // rather than erroring, so a driverless machine would fail the suite
+        // instead of skipping it.
+        if !unsafe { cudarc::driver::sys::is_culib_present() } {
+            eprintln!("skipping: NVIDIA driver (libcuda) not present");
+            return None;
+        }
         let ctx = match CudaContext::new(0) {
             Ok(c) => c,
             Err(e) => {
@@ -122,7 +129,11 @@ fn decompression_round_trips_public_keys() {
     let ok = stream.clone_dtoh(&d_ok).expect("download");
     for (i, p) in points.iter().enumerate() {
         assert_eq!(ok[i], 1, "case {i}: a real public key failed to decompress");
-        assert_eq!(&out[32 * i..32 * i + 32], &p[..], "case {i}: round trip changed the key");
+        assert_eq!(
+            &out[32 * i..32 * i + 32],
+            &p[..],
+            "case {i}: round trip changed the key"
+        );
     }
 }
 
@@ -170,7 +181,10 @@ fn decompression_rejects_non_points() {
     assert_eq!(agreed, candidates.len());
     // Sanity: the sample really does contain both kinds, so the agreement above
     // is not vacuous.
-    assert!(accepted > 500 && accepted < 1500, "unexpected split: {accepted}/2048");
+    assert!(
+        accepted > 500 && accepted < 1500,
+        "unexpected split: {accepted}/2048"
+    );
 }
 
 /// Walk `steps` additions of 8*B from each of `scalars`, and check the device
@@ -196,7 +210,9 @@ fn check_walk(h: &Harness, scalars: &[Scalar], steps: u32) {
 
     let delta = Scalar::from(8u64) * Scalar::from(u64::from(steps));
     for (i, s) in scalars.iter().enumerate() {
-        let expected = (ED25519_BASEPOINT_POINT * (s + delta)).compress().to_bytes();
+        let expected = (ED25519_BASEPOINT_POINT * (s + delta))
+            .compress()
+            .to_bytes();
         assert_eq!(
             &out[32 * i..32 * i + 32],
             &expected[..],
@@ -246,6 +262,9 @@ fn points_stay_on_the_curve_throughout_a_walk() {
     stream.synchronize().expect("sync");
     let out = stream.clone_dtoh(&d_out).expect("download");
     for (i, v) in out.iter().enumerate() {
-        assert_eq!(*v, 1, "case {i}: point left the curve after {steps} additions");
+        assert_eq!(
+            *v, 1,
+            "case {i}: point left the curve after {steps} additions"
+        );
     }
 }

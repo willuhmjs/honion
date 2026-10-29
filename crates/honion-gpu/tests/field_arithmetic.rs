@@ -62,7 +62,15 @@ impl Harness {
     }
 
     /// Set up, or return `None` when no usable CUDA device is present.
+    ///
+    /// The `is_culib_present` guard matters: with the driver library absent
+    /// entirely, cudarc panics rather than erroring, so a driverless machine
+    /// would fail the suite instead of skipping it.
     fn with_defines(defines: &[(&str, String)]) -> Option<Self> {
+        if !unsafe { cudarc::driver::sys::is_culib_present() } {
+            eprintln!("skipping: NVIDIA driver (libcuda) not present");
+            return None;
+        }
         let ctx = match CudaContext::new(0) {
             Ok(c) => c,
             Err(e) => {
@@ -175,7 +183,11 @@ impl Harness {
             .clone_dtoh(&d_out)
             .expect("download")
             .chunks_exact(8)
-            .map(|c| { let mut r = [0u8; 8]; r.copy_from_slice(c); r })
+            .map(|c| {
+                let mut r = [0u8; 8];
+                r.copy_from_slice(c);
+                r
+            })
             .collect()
     }
 }
@@ -191,12 +203,12 @@ fn test_inputs(count: usize, seed: u64) -> Vec<[u8; 32]> {
     let edges = [
         BigUint::from(0u32),
         BigUint::one(),
-        p.clone() - BigUint::one(),                  // p-1, largest canonical
+        p.clone() - BigUint::one(), // p-1, largest canonical
         p.clone() - BigUint::from(2u32),
         (BigUint::one() << 255u32) - BigUint::one(), // 2^255-1, above p
         BigUint::one() << 254u32,
-        (BigUint::one() << 26u32) - BigUint::one(),  // a full even limb
-        (BigUint::one() << 25u32) - BigUint::one(),  // a full odd limb
+        (BigUint::one() << 26u32) - BigUint::one(), // a full even limb
+        (BigUint::one() << 25u32) - BigUint::one(), // a full odd limb
     ];
     for e in edges {
         v.push(to_bytes(&e));
@@ -372,6 +384,10 @@ fn predicates_match_the_canonical_encoding() {
             u8::from(v != BigUint::from(0u32)),
             "fe_isnonzero at case {i}"
         );
-        assert_eq!(out[2 * i + 1], canonical[0] & 1, "fe_isnegative at case {i}");
+        assert_eq!(
+            out[2 * i + 1],
+            canonical[0] & 1,
+            "fe_isnegative at case {i}"
+        );
     }
 }

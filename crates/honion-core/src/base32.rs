@@ -79,7 +79,10 @@ impl Base32Char {
     // `ALPHABET` has exactly 32 entries, so this index is in range for every
     // value of this type. That is the whole point of the newtype: the check
     // happened once, at construction, and does not have to happen again here.
-    #[allow(clippy::indexing_slicing, reason = "index bounded by the type invariant")]
+    #[allow(
+        clippy::indexing_slicing,
+        reason = "index bounded by the type invariant"
+    )]
     pub const fn as_ascii(self) -> u8 {
         ALPHABET[self.0 as usize]
     }
@@ -132,13 +135,14 @@ pub enum DecodeError {
 #[must_use]
 pub const fn encoded_len(n: usize) -> usize {
     // 8 characters per 5 bytes, rounding up.
-    n.div_ceil(5) * 8 - match n % 5 {
-        0 => 0,
-        1 => 6,
-        2 => 4,
-        3 => 3,
-        _ => 1, // n % 5 == 4
-    }
+    n.div_ceil(5) * 8
+        - match n % 5 {
+            0 => 0,
+            1 => 6,
+            2 => 4,
+            3 => 3,
+            _ => 1, // n % 5 == 4
+        }
 }
 
 /// Number of leading input bytes that a prefix of `chars` characters depends on.
@@ -206,8 +210,7 @@ pub fn decode(input: &str) -> Result<Vec<u8>, DecodeError> {
     let mut acc: u32 = 0;
     let mut nbits: u32 = 0;
     for (offset, &byte) in bytes.iter().enumerate() {
-        let c = Base32Char::from_ascii(byte)
-            .ok_or(DecodeError::BadCharacter { offset, byte })?;
+        let c = Base32Char::from_ascii(byte).ok_or(DecodeError::BadCharacter { offset, byte })?;
         acc = (acc << BITS_PER_CHAR) | u32::from(c.value());
         nbits += BITS_PER_CHAR as u32;
         if nbits >= 8 {
@@ -241,7 +244,11 @@ mod tests {
         ];
         for (raw, expected) in cases {
             assert_eq!(&encode(raw), expected, "encoding {raw:?}");
-            assert_eq!(&decode(expected).expect("valid"), raw, "decoding {expected:?}");
+            assert_eq!(
+                &decode(expected).expect("valid"),
+                raw,
+                "decoding {expected:?}"
+            );
         }
     }
 
@@ -274,7 +281,10 @@ mod tests {
     fn rejects_uppercase() {
         assert!(matches!(
             decode("MZXW6"),
-            Err(DecodeError::BadCharacter { offset: 0, byte: b'M' })
+            Err(DecodeError::BadCharacter {
+                offset: 0,
+                byte: b'M'
+            })
         ));
     }
 
@@ -322,7 +332,11 @@ mod tests {
     fn alphabet_has_no_duplicates() {
         let mut seen = [false; 256];
         for &byte in &ALPHABET {
-            assert!(!seen[byte as usize], "duplicate {:?} in alphabet", byte as char);
+            assert!(
+                !seen[byte as usize],
+                "duplicate {:?} in alphabet",
+                byte as char
+            );
             seen[byte as usize] = true;
         }
     }

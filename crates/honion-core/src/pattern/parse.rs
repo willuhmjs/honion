@@ -312,9 +312,8 @@ fn parse_class(bytes: &[u8], open: usize) -> Result<(CharClass, usize), PatternE
         return Err(PatternError::EmptyClass { open_offset: open });
     }
     let effective = if negated { !bits } else { bits };
-    let class = CharClass::from_bits(effective).ok_or(PatternError::UnsatisfiableClass {
-        open_offset: open,
-    })?;
+    let class = CharClass::from_bits(effective)
+        .ok_or(PatternError::UnsatisfiableClass { open_offset: open })?;
     Ok((class, i + 1))
 }
 
@@ -374,7 +373,9 @@ pub enum PatternError {
         offset: usize,
     },
     /// A class listed no members, as in `[]`.
-    #[error("empty character class at offset {open_offset}; a class must list at least one character")]
+    #[error(
+        "empty character class at offset {open_offset}; a class must list at least one character"
+    )]
     EmptyClass {
         /// Offset of the `[`.
         open_offset: usize,
@@ -423,7 +424,10 @@ mod tests {
         let a = atoms("carroll");
         assert_eq!(a.len(), 7);
         assert!(a.iter().all(|x| matches!(x, Atom::Literal(_))));
-        assert_eq!(Pattern::parse("carroll").expect("valid").to_string(), "carroll");
+        assert_eq!(
+            Pattern::parse("carroll").expect("valid").to_string(),
+            "carroll"
+        );
     }
 
     #[test]
@@ -453,7 +457,9 @@ mod tests {
     #[test]
     fn class_admits_listed_members() {
         let a = atoms("[abc]");
-        let Atom::Class(k) = a[0] else { panic!("expected a class") };
+        let Atom::Class(k) = a[0] else {
+            panic!("expected a class")
+        };
         assert_eq!(k.len(), 3);
         for c in ['a', 'b', 'c'] {
             let ch = Base32Char::from_ascii(c as u8).expect("alphabet");
@@ -466,7 +472,9 @@ mod tests {
     #[test]
     fn negated_class_admits_the_complement() {
         let a = atoms("[^a]");
-        let Atom::Class(k) = a[0] else { panic!("expected a class") };
+        let Atom::Class(k) = a[0] else {
+            panic!("expected a class")
+        };
         assert_eq!(k.len(), 31);
         let ch = Base32Char::from_ascii(b'a').expect("alphabet");
         assert!(!k.admits_value(ch.value()));
@@ -474,13 +482,17 @@ mod tests {
 
     #[test]
     fn duplicate_class_members_are_idempotent() {
-        let Atom::Class(k) = atoms("[aab]")[0] else { panic!("expected a class") };
+        let Atom::Class(k) = atoms("[aab]")[0] else {
+            panic!("expected a class")
+        };
         assert_eq!(k.len(), 2);
     }
 
     #[test]
     fn single_member_class_is_equivalent_to_a_literal() {
-        let Atom::Class(k) = atoms("[q]")[0] else { panic!("expected a class") };
+        let Atom::Class(k) = atoms("[q]")[0] else {
+            panic!("expected a class")
+        };
         let q = Base32Char::from_ascii(b'q').expect("alphabet");
         assert_eq!(k.as_single(), Some(q));
         assert_eq!(k, CharClass::single(q));
@@ -500,7 +512,9 @@ mod tests {
         let long = "a".repeat(MAX_PATTERN_ATOMS + 1);
         assert_eq!(
             Pattern::parse(&long),
-            Err(PatternError::TooLong { max: MAX_PATTERN_ATOMS })
+            Err(PatternError::TooLong {
+                max: MAX_PATTERN_ATOMS
+            })
         );
         // Exactly at the limit is accepted.
         let at_limit = "a".repeat(MAX_PATTERN_ATOMS);
@@ -609,13 +623,14 @@ mod tests {
 
     #[test]
     fn every_error_reports_a_useful_offset() {
-        let cases = [
-            "carRoll", "ab[cd", "ab]cd", "ab[]", "[a[b]]", "ab cd",
-        ];
+        let cases = ["carRoll", "ab[cd", "ab]cd", "ab[]", "[a[b]]", "ab cd"];
         for src in cases {
             let err = Pattern::parse(src).expect_err("should fail");
             let offset = err.offset().expect("should carry an offset");
-            assert!(offset < src.len(), "offset {offset} out of range for {src:?}");
+            assert!(
+                offset < src.len(),
+                "offset {offset} out of range for {src:?}"
+            );
         }
     }
 

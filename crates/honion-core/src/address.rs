@@ -279,9 +279,15 @@ mod tests {
         // if every other test were removed.
         let addr = OnionAddress::from_pubkey(&[0u8; PUBKEY_LEN]);
         assert_eq!(addr.body().len(), ADDRESS_CHARS);
-        assert!(addr.body().starts_with("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"));
+        assert!(
+            addr.body()
+                .starts_with("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+        );
         // Re-parsing must accept what we produced.
-        assert_eq!(OnionAddress::parse(&addr.to_hostname()).expect("valid"), addr);
+        assert_eq!(
+            OnionAddress::parse(&addr.to_hostname()).expect("valid"),
+            addr
+        );
     }
 
     #[test]

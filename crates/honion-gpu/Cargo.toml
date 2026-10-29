@@ -10,7 +10,6 @@ license.workspace = true
 honion-core.workspace = true
 cudarc = { version = "0.19", default-features = false, features = ["cuda-13010", "driver", "nvrtc", "dynamic-loading"] }
 thiserror.workspace = true
-zeroize.workspace = true
 
 [dev-dependencies]
 num-bigint = "0.4"

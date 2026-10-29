@@ -347,7 +347,8 @@ fn search_device(
             searcher.half(),
             searcher.candidates_per_batch(),
             honion_gpu::local_bytes_per_thread(searcher.half()) as f64
-                * f64::from(searcher.num_threads()) / 1e9
+                * f64::from(searcher.num_threads())
+                / 1e9
         );
     }
 
@@ -377,7 +378,9 @@ fn search_device(
         let next_scalars = draw_scalars(threads)?;
         let next_points = public_keys(&next_scalars);
 
-        let outcome = searcher.collect(batches).context("collecting search results")?;
+        let outcome = searcher
+            .collect(batches)
+            .context("collecting search results")?;
         let launch_time = launch_start.elapsed().as_secs_f64();
 
         if outcome.total_found as usize > outcome.hits.len() {
@@ -490,9 +493,15 @@ pub fn run_estimate(args: &EstimateArgs) -> Result<()> {
     }
     let d = set.difficulty_log2();
     println!();
-    println!("combined difficulty : {d:.1} bits ({} expected trials)", si(2f64.powf(d)));
+    println!(
+        "combined difficulty : {d:.1} bits ({} expected trials)",
+        si(2f64.powf(d))
+    );
     println!("assumed rate        : {}/s", si(args.rate));
-    println!("expected time       : {}", humantime(2f64.powf(d) / args.rate));
+    println!(
+        "expected time       : {}",
+        humantime(2f64.powf(d) / args.rate)
+    );
     println!(
         "prefilter           : {:.1} bits of selectivity",
         tables.prefilter_selectivity_log2()

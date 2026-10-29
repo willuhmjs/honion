@@ -172,7 +172,8 @@ mod tests {
         let scalar = SecretScalar::generate().expect("randomness");
         let address = OnionAddress::from_pubkey(&scalar.public_key());
         let prefix: String = address.body().chars().take(4).collect();
-        let set = PatternSet::compile(&[Pattern::parse(&prefix).expect("valid")]).expect("non-empty");
+        let set =
+            PatternSet::compile(&[Pattern::parse(&prefix).expect("valid")]).expect("non-empty");
         VerifiedKey::verify(&scalar, 0, &set).expect("verifies")
     }
 
@@ -236,7 +237,9 @@ mod tests {
             "the directory is named for the full hostname, including .onion"
         );
         assert!(
-            dir.file_name().and_then(|s| s.to_str()).is_some_and(|n| n.ends_with(".onion")),
+            dir.file_name()
+                .and_then(|s| s.to_str())
+                .is_some_and(|n| n.ends_with(".onion")),
         );
         assert_eq!(
             fs::metadata(&dir).expect("stat").permissions().mode() & 0o777,
