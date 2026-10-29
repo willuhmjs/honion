@@ -117,6 +117,30 @@ pub fn auto_threads(device: u32, half: u32) -> Result<u32, SearchError> {
     Ok((blocks as u32) * BLOCK_SIZE)
 }
 
+/// Describe a device before any searcher exists.
+///
+/// For callers — the distributed worker being one — that must name the
+/// hardware they will offer before they can afford to build a `Searcher`
+/// (which needs compiled tables the worker gets later still).
+///
+/// # Errors
+///
+/// If the device cannot be queried.
+pub fn describe_device(device: u32) -> Result<DeviceInfo, SearchError> {
+    let ctx = context_on(device)?;
+    let name = ctx
+        .name()
+        .map_err(|e| SearchError::Driver(format!("{e:?}")))?;
+    let (major, minor) = ctx
+        .compute_capability()
+        .map_err(|e| SearchError::Driver(format!("{e:?}")))?;
+    Ok(DeviceInfo {
+        backend: "CUDA",
+        name,
+        detail: format!("compute capability {major}.{minor}"),
+    })
+}
+
 /// The number of CUDA devices the driver can see.
 ///
 /// # Errors

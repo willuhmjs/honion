@@ -140,6 +140,24 @@ pub fn auto_threads(device: u32, half: u32) -> Result<u32, SearchError> {
     Ok((groups as u32) * THREADGROUP as u32)
 }
 
+/// Describe a device before any searcher exists. See the CUDA backend's
+/// equivalent; Metal counts one device, so any accepted ordinal answers
+/// with the system default.
+///
+/// # Errors
+///
+/// If no Metal device is present.
+pub fn describe_device(device: u32) -> Result<DeviceInfo, SearchError> {
+    check_device(device)?;
+    let device = MTLCreateSystemDefaultDevice()
+        .ok_or_else(|| SearchError::Driver("no Metal device available".into()))?;
+    Ok(DeviceInfo {
+        backend: "Metal",
+        name: device.name().to_string(),
+        detail: String::new(),
+    })
+}
+
 /// A configured Metal search: compiled kernels, uploaded tables, shared buffers.
 pub struct Searcher {
     build_kernel: MslKernel,

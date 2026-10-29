@@ -39,5 +39,5 @@ pub use search::{
     DEFAULT_HALF, DeviceInfo, Hit, LaunchOutcome, SearchError, candidates_per_batch, device_count,
 };
 #[cfg(any(feature = "cuda", feature = "metal"))]
-pub use search::{Searcher, auto_threads, local_bytes_per_thread};
+pub use search::{Searcher, auto_threads, describe_device, local_bytes_per_thread};
 pub use tables::{DeviceTables, TableError};

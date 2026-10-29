@@ -67,6 +67,25 @@ pub fn device_count() -> Result<u32, SearchError> {
     metal::device_count()
 }
 
+/// Describe one device by ordinal without owning it yet.
+///
+/// The distributed worker names the hardware it offers before it can
+/// afford a `Searcher`; see the backend docs.
+///
+/// # Errors
+///
+/// If the device cannot be queried.
+#[cfg(feature = "cuda")]
+pub fn describe_device(device: u32) -> Result<DeviceInfo, SearchError> {
+    cuda::describe_device(device)
+}
+
+/// See the [`describe_device`] above; this is the Metal build of it.
+#[cfg(all(feature = "metal", not(feature = "cuda")))]
+pub fn describe_device(device: u32) -> Result<DeviceInfo, SearchError> {
+    metal::describe_device(device)
+}
+
 /// Positive offsets in the kernel's precomputed table.
 ///
 /// Each offset yields two candidates — `base + off` and `base - off` — via the
