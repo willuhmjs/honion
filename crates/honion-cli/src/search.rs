@@ -1,10 +1,10 @@
 //! The `search`, `estimate` and `verify` subcommands.
 
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
 
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use clap::Args;
 use honion_core::address::OnionAddress;
 use honion_core::pattern::{Pattern, PatternSet, SuffixPattern, SuffixSet};
@@ -42,14 +42,14 @@ const DEFAULT_LAUNCH_SECONDS: f64 = 4.0;
 const WORKER_STACK_BYTES: usize = 64 * 1024 * 1024;
 
 /// Arguments to `honion search`.
-#[derive(Args, Debug)]
+#[derive(Args, Debug, Clone)]
 pub struct SearchArgs {
     /// Pattern to search for. May be repeated.
     ///
     /// A pattern is base32 characters (a-z, 2-7), `?` for any character, and
     /// `[abc]` or `[^abc]` for a choice. It matches the start of the address.
     #[arg(long = "prefix", value_name = "PATTERN")]
-    prefixes: Vec<String>,
+    pub(crate) prefixes: Vec<String>,
 
     /// Ending the address must have. May be repeated; a candidate then needs
     /// the prefix *and* any one of these endings.
@@ -61,7 +61,7 @@ pub struct SearchArgs {
     /// prices them accordingly: every address ends in 'd', the character
     /// before it is one of a, i, q, y, and only the rest cost 5 bits each.
     #[arg(long = "suffix", value_name = "PATTERN")]
-    suffixes: Vec<String>,
+    pub(crate) suffixes: Vec<String>,
 
     /// File of patterns, one per line; `#` comments and blank lines ignored.
     #[arg(long, value_name = "FILE")]
@@ -69,7 +69,7 @@ pub struct SearchArgs {
 
     /// Directory to write results into. One subdirectory per address.
     #[arg(long, short, value_name = "DIR")]
-    out: PathBuf,
+    pub(crate) out: PathBuf,
 
     /// CUDA devices to search on: `all`, or comma-separated device numbers.
     ///
@@ -81,34 +81,34 @@ pub struct SearchArgs {
     /// which is slower than one worker and mostly a way to exercise the
     /// multi-worker path on a single-card machine.
     #[arg(long, default_value = "0", value_name = "DEV")]
-    device: String,
+    pub(crate) device: String,
 
     /// Stop after this many matches, across all devices. Zero means run until
     /// interrupted.
     #[arg(long, default_value_t = 1)]
-    count: usize,
+    pub(crate) count: usize,
 
     /// Concurrent walks, per device. Defaults to as many as fit comfortably
     /// in that device's free memory, which is where throughput plateaus.
     #[arg(long)]
-    threads: Option<u32>,
+    pub(crate) threads: Option<u32>,
 
     /// Precomputed offsets. Each yields two candidates, so a batch covers
     /// `2N+1` keys per modular inversion. Larger uses more memory.
     #[arg(long, default_value_t = DEFAULT_OFFSETS)]
-    offsets: u32,
+    pub(crate) offsets: u32,
 
     /// Seconds of GPU work per launch, which is also the progress interval.
     #[arg(long, default_value_t = DEFAULT_LAUNCH_SECONDS)]
-    launch_seconds: f64,
+    pub(crate) launch_seconds: f64,
 
     /// Minimum prefilter selectivity in bits.
     #[arg(long, default_value_t = DEFAULT_MIN_SELECTIVITY)]
-    min_selectivity: f64,
+    pub(crate) min_selectivity: f64,
 
     /// Suppress progress output.
     #[arg(long, short)]
-    quiet: bool,
+    pub(crate) quiet: bool,
 
     /// Continue the checkpoint in --out: its patterns, elapsed time and
     /// counters carry over, so a crash or Ctrl-C costs at most one launch's
@@ -128,6 +128,20 @@ pub struct SearchArgs {
     /// days, the trade is usually worth it.
     #[arg(long)]
     paranoid: bool,
+
+    /// Accept remote workers at this address: `PORT`, `HOST:PORT` or
+    /// `:PORT` (which binds every interface).
+    ///
+    /// Remote workers rent out a GPU and nothing else: the coordinator here
+    /// keeps every secret scalar, ships only the epoch's public start
+    /// points, and verifies every returned claim before a key is written,
+    /// exactly as it does for a local device. The traffic is not encrypted
+    /// or authenticated — it carries no secrets, but patterns are visible
+    /// on the wire and a man in the middle can waste time, so the boundary
+    /// is "a network you trust not to waste your time". Combine with
+    /// `--device none` to run a coordinator on a machine without a GPU.
+    #[arg(long, value_name = "ADDR")]
+    pub(crate) listen: Option<String>,
 }
 
 /// Arguments to `honion estimate`.
@@ -207,20 +221,20 @@ fn parse_devices(spec: &str, available: u32) -> Result<Vec<u32>> {
 }
 
 /// What the per-device search workers share.
-struct Shared {
+pub(crate) struct Shared {
     /// Combined progress across every device, so the rate line a user reads
     /// is the machine's throughput rather than one card's.
-    progress: Mutex<Progress>,
+    pub(crate) progress: Mutex<Progress>,
     /// Keys written so far, across all workers. This is what `--count`
     /// counts.
-    written: AtomicUsize,
+    pub(crate) written: AtomicUsize,
     /// Set when `--count` is met or a worker fails; workers check it at
     /// launch boundaries, so a stop takes effect within one launch interval
     /// and in-flight work is kept rather than discarded.
-    stop: AtomicBool,
+    pub(crate) stop: AtomicBool,
     /// One entry per failed worker, so every device's failure is reported
     /// rather than only the first.
-    errors: Mutex<Vec<String>>,
+    pub(crate) errors: Mutex<Vec<String>>,
 }
 
 /// `honion search`.
@@ -329,17 +343,45 @@ pub fn run_search(args: &SearchArgs) -> Result<()> {
     if args.offsets == 0 {
         bail!("--offsets must be positive");
     }
-    let devices = parse_devices(
-        &args.device,
-        honion_gpu::device_count().context("querying CUDA devices")?,
-    )?;
+    // `--device none` is the coordinator with no GPU of its own: a rented
+    // fleet alone. It requires --listen, and it deliberately never asks a
+    // CUDA driver what it thinks, so the coordinator runs on machines that
+    // have no GPU answer to give.
+    let devices = if args.device.trim().eq_ignore_ascii_case("none") {
+        if args.listen.is_none() {
+            bail!("--device none means remote workers only; add --listen to accept them");
+        }
+        Vec::new()
+    } else {
+        parse_devices(
+            &args.device,
+            honion_gpu::device_count().context("querying CUDA devices")?,
+        )?
+    };
+    let listener = match &args.listen {
+        Some(spec) => {
+            let addr = crate::net::bind_addr(spec)?;
+            let listener = std::net::TcpListener::bind(addr)
+                .with_context(|| format!("listening for workers on {addr}"))?;
+            if !args.quiet {
+                eprintln!("honion: accepting workers on {addr}");
+            }
+            Some(listener)
+        }
+        None => None,
+    };
 
     let difficulty = set.difficulty_log2() + suffixes.difficulty_log2();
     if !args.quiet {
         eprintln!(
-            "honion: searching for {} pattern(s) on {} device(s)",
+            "honion: searching for {} pattern(s) on {} device(s){}",
             sourced.len(),
             devices.len(),
+            if args.listen.is_some() {
+                ", plus remote workers"
+            } else {
+                ""
+            },
         );
         for s in &sourced {
             eprintln!(
@@ -384,27 +426,51 @@ pub fn run_search(args: &SearchArgs) -> Result<()> {
         examined: 0,
         written: 0,
     };
-    let shared = Shared {
+    let shared = Arc::new(Shared {
         progress: Mutex::new(progress),
         written: AtomicUsize::new(0),
         stop: AtomicBool::new(false),
         errors: Mutex::new(Vec::new()),
-    };
+    });
 
     // One worker per device. Each owns its Searcher and its epoch's scalars,
     // which are drawn, uploaded and destroyed on that thread — every device
     // sees only the public keys of its own worker's scalars, so the
     // no-secret-on-the-device invariant of docs/05 holds per card unchanged.
+    // The coordinator's connection threads are joined by handle rather
+    // than by scope (scoped threads cannot spawn scoped threads), so they
+    // take this context by Arc. The locals move by Arc too: the closure
+    // below wants owned captures either way, and the clones are refcounts.
+    let args = Arc::new(args.clone());
+    let set = Arc::new(set);
+    let suffixes = Arc::new(suffixes);
+    let meta = Arc::new(meta);
+    let coord_handle = listener
+        .map(|listener| {
+            crate::net::coord::serve(
+                crate::net::coord::CoordCtx {
+                    args: Arc::clone(&args),
+                    set: Arc::clone(&set),
+                    suffixes: Arc::clone(&suffixes),
+                    meta: Arc::clone(&meta),
+                    shared: Arc::clone(&shared),
+                },
+                listener,
+            )
+        })
+        .transpose()?;
+
     std::thread::scope(|scope| {
         for &device in &devices {
-            // Move a *reference* into each worker, not the shared state
-            // itself: `&Shared` is `Copy`, so every worker gets its own
-            // pointer to the one Shared.
-            let shared = &shared;
-            let set = &set;
+            // Move a clone into each worker, not the shared state itself:
+            // an `Arc` clone is a refcount bump, so every worker holds its
+            // own pointer to the one Shared.
+            let shared = Arc::clone(&shared);
+            let set = Arc::clone(&set);
             let tables = &tables;
-            let suffixes = &suffixes;
-            let meta = &meta;
+            let suffixes = Arc::clone(&suffixes);
+            let meta = Arc::clone(&meta);
+            let args = Arc::clone(&args);
             std::thread::Builder::new()
                 .name(format!("honion-gpu{device}"))
                 // NVRTC compiles the kernel and the driver JITs the PTX on
@@ -413,7 +479,8 @@ pub fn run_search(args: &SearchArgs) -> Result<()> {
                 // gets; the main thread's 8 MiB never noticed.
                 .stack_size(WORKER_STACK_BYTES)
                 .spawn_scoped(scope, move || {
-                    if let Err(e) = search_device(device, args, set, tables, suffixes, meta, shared)
+                    if let Err(e) =
+                        search_device(device, &args, &set, tables, &suffixes, &meta, &shared)
                     {
                         // Report the whole context chain, then take the
                         // other workers down at their next launch boundary
@@ -432,6 +499,15 @@ pub fn run_search(args: &SearchArgs) -> Result<()> {
         }
     });
 
+    // Every remote round is verified-or-dropped before the summary: the
+    // overseer exits on `stop` and joins its connection threads, each of
+    // which bounds its own socket waits.
+    if let Some(handle) = coord_handle {
+        handle
+            .join()
+            .map_err(|_| anyhow!("the coordinator thread panicked"))?;
+    }
+
     let written = shared.written.load(Ordering::SeqCst);
     shared
         .progress
@@ -441,10 +517,13 @@ pub fn run_search(args: &SearchArgs) -> Result<()> {
 
     let errors = shared.errors.lock().expect("the error list was poisoned");
     if !errors.is_empty() {
+        // Devices and remote workers alike land in the error list; name the
+        // failures rather than dividing by a worker count the coordinator
+        // only half knows (remotes join and leave on their own schedule).
         bail!(
-            "{} of {} device(s) failed ({} key(s) written)",
+            "{} worker(s) failed: {} ({} key(s) written)",
             errors.len(),
-            devices.len(),
+            errors.join(", "),
             written,
         );
     }
@@ -673,7 +752,7 @@ fn search_device(
 /// running search: the statistics are a courtesy, the keys on disk are the
 /// product, and killing a working two-week run over an unreadable directory
 /// would be the checkpoint causing the loss it exists to prevent.
-fn save_checkpoint(args: &SearchArgs, meta: &SearchState, progress: &Progress) {
+pub(crate) fn save_checkpoint(args: &SearchArgs, meta: &SearchState, progress: &Progress) {
     let state = SearchState {
         prefixes: meta.prefixes.clone(),
         suffixes: meta.suffixes.clone(),
@@ -768,7 +847,7 @@ pub fn run_estimate(args: &EstimateArgs) -> Result<()> {
 /// The buffer is locked against swap on the way out (see `secure_mem`); the
 /// scalars themselves zeroize on drop and never leave this process's CPU
 /// side, so this closes the last window docs/05 left open.
-fn draw_scalars(threads: u32) -> Result<Vec<SecretScalar>> {
+pub(crate) fn draw_scalars(threads: u32) -> Result<Vec<SecretScalar>> {
     let scalars = (0..threads)
         .into_par_iter()
         .map(|_| SecretScalar::generate())
@@ -779,7 +858,7 @@ fn draw_scalars(threads: u32) -> Result<Vec<SecretScalar>> {
 }
 
 /// The public keys of those scalars. Only these reach the device.
-fn public_keys(scalars: &[SecretScalar]) -> Vec<[u8; 32]> {
+pub(crate) fn public_keys(scalars: &[SecretScalar]) -> Vec<[u8; 32]> {
     scalars.par_iter().map(SecretScalar::public_key).collect()
 }
 

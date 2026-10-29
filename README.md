@@ -79,6 +79,8 @@ honion search   --prefix carroll --out ./keys --count 1
 honion search   --device all --prefix carroll --out ./keys   # every GPU
 honion search   --prefix carroll --suffix qad --out ./keys   # and an ending
 honion search   --out ./keys --resume                        # after a crash
+honion search   --prefix carroll --out ./keys --listen 8121  # + remote GPUs
+honion worker   --coordinator gpu-farm:8121  # rent this GPU to that search
 honion verify   ./keys/carroll…             # re-derive and check a result
 ```
 
@@ -101,6 +103,15 @@ Patterns are base32 characters (`a`–`z`, `2`–`7`), `?` for any character, an
 `[abc]` / `[^abc]` for a choice. Repeat `--prefix`, or pass
 `--patterns-file` — searching many patterns at once costs almost nothing and is
 the cheapest way to improve your odds.
+
+`--listen` makes the search a coordinator: other machines run
+`honion worker --coordinator host:8121`, and their GPUs add to the same
+search, the same pattern set, and the same `--out`. The wire is exactly as
+trust-poor as the GPU already is — the worker receives only public start
+points, returns only claims, and the coordinator verifies every one itself
+before writing anything (`--device none` runs the coordinator on a
+machine with no GPU at all). Docs/09 covers the protocol and the boundary
+it does not cross.
 
 `--device` takes `all` or a comma-separated list of device numbers
 (`--device 0,2`). Each device searches independently with its own fresh
@@ -229,6 +240,7 @@ To reproduce the benchmark, see [`bench/`](bench/).
 | [06 — Performance](docs/06-performance.md) | measurements, tuning, and what was left undone |
 | [07 — Benchmarks](docs/07-benchmarks.md) | measured against `mkp224o` and `prefix32`, method included |
 | [08 — Metal backend](docs/08-metal-backend.md) | honion on Apple Silicon: the MSL port, the compiler traps, and the measured numbers |
+| [09 — Distributed search](docs/09-distributed-search.md) | renting remote GPUs without renting the secret |
 
 ## Layout
 

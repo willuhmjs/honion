@@ -17,6 +17,7 @@
 //!
 //! The secret scalars never leave step 3's memory. See `docs/05-security-model.md`.
 
+mod net;
 mod patterns;
 mod progress;
 mod search;
@@ -39,6 +40,8 @@ Examples:
   honion search --device all --prefix carroll --out ./keys    every GPU
   honion search --device 0,2 --prefix carroll --out ./keys    two of several
   honion verify ./keys/carroll....onion     re-derive and check a result
+  honion search --prefix carroll --out ./keys --listen 8121
+  honion worker --coordinator gpu-farm:8121       rent out another GPU
 
 Patterns are base32: a-z and 2-7 only. There is no 0, 1, 8 or 9 -- use o, l,
 s, z instead. `?` matches any character, `[abc]` and `[^abc]` match a choice.
@@ -65,7 +68,15 @@ struct Cli {
 #[derive(Subcommand, Debug)]
 enum Command {
     /// Search for keys whose addresses match a pattern.
+    ///
+    /// With --listen, also accepts remote workers (see `honion worker`).
     Search(search::SearchArgs),
+    /// Rent out this machine's GPU to a remote `honion search --listen`.
+    ///
+    /// The worker never receives a secret and never writes a key: it runs
+    /// launches on public start points and returns claims for the
+    /// coordinator to verify.
+    Worker(net::worker::WorkerArgs),
     /// Report how much work a pattern needs, without searching.
     Estimate(search::EstimateArgs),
     /// Re-derive a hidden-service key and check it against its own hostname.
@@ -81,6 +92,7 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     match cli.command {
         Command::Search(args) => search::run_search(&args),
+        Command::Worker(args) => net::worker::run_worker(&args),
         Command::Estimate(args) => search::run_estimate(&args),
         Command::Verify { dir } => search::run_verify(&dir),
     }

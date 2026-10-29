@@ -128,7 +128,12 @@ file that disagrees with its hostname.
 
 Verification failure is reported loudly and aborts the run. It is never an
 ordinary condition to skip past: it means the GPU and the CPU disagree, which is
-a bug or a hardware fault.
+a bug or a hardware fault. (A *remote* worker's failed claim — `--listen`,
+docs/09 — is dropped and logged rather than fatal: a card we rented is
+neither ours to trust nor ours to debug, and the verifier already did its
+job. The remote worker sees the same public start points a local GPU sees,
+so compromise of one buys exactly what compromise of a local GPU buys:
+wasted time, never a key.)
 
 ## On disk
 
