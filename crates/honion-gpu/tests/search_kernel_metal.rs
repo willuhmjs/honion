@@ -39,7 +39,7 @@ use rand::{Rng, SeedableRng};
 fn have_gpu() -> bool {
     let set = PatternSet::compile(&[Pattern::parse("a").expect("valid")]).expect("non-empty");
     let tables = DeviceTables::build(&set);
-    match Searcher::new(&tables, 64, 8, 16) {
+    match Searcher::new(0, &tables, 64, 8, 16) {
         Ok(_) => true,
         Err(SearchError::Driver(msg)) if msg.contains("no Metal device") => {
             eprintln!("skipping: no Metal device available");
@@ -115,7 +115,7 @@ fn finds_a_planted_needle() {
     let set = PatternSet::compile(&[pattern]).expect("non-empty");
     let tables = DeviceTables::build(&set);
 
-    let mut searcher = Searcher::new(&tables, THREADS, HALF, 1024).expect("searcher");
+    let mut searcher = Searcher::new(0, &tables, THREADS, HALF, 1024).expect("searcher");
     searcher.set_start_points(&points).expect("points");
     let outcome = searcher.launch(CANDS).expect("launch");
 
@@ -158,7 +158,7 @@ fn assert_device_agrees_with_host(pattern_src: &str, threads: u32, candidates: u
     let set = PatternSet::compile(&[pattern]).expect("non-empty");
     let tables = DeviceTables::build(&set);
 
-    let mut searcher = Searcher::new(&tables, threads, half, 1 << 16).expect("searcher");
+    let mut searcher = Searcher::new(0, &tables, threads, half, 1 << 16).expect("searcher");
     searcher.set_start_points(&points).expect("points");
     let outcome = searcher.launch(candidates).expect("launch");
     assert_eq!(
@@ -240,7 +240,7 @@ fn splitting_a_launch_across_dispatches_changes_nothing() {
     let tables = DeviceTables::build(&set);
 
     let run = |cap: Option<u32>| {
-        let mut s = Searcher::new(&tables, THREADS, HALF, 1 << 16).expect("searcher");
+        let mut s = Searcher::new(0, &tables, THREADS, HALF, 1 << 16).expect("searcher");
         s.set_max_batches_per_dispatch(cap);
         s.set_start_points(&points).expect("points");
         let outcome = s.launch(CANDS).expect("launch");
@@ -290,7 +290,7 @@ fn a_chunked_searcher_repeats_a_launch_identically() {
     let set = PatternSet::compile(&[pattern]).expect("non-empty");
     let tables = DeviceTables::build(&set);
 
-    let mut s = Searcher::new(&tables, THREADS, HALF, 1 << 16).expect("searcher");
+    let mut s = Searcher::new(0, &tables, THREADS, HALF, 1 << 16).expect("searcher");
     s.set_max_batches_per_dispatch(Some(1));
 
     let mut seen = Vec::new();
@@ -351,7 +351,7 @@ fn multiple_patterns_are_all_reported() {
     let half = 32u32;
     let candidates = 512u32;
     let (scalars, points) = starting_points(threads as usize, 24);
-    let mut searcher = Searcher::new(&tables, threads, half, 1 << 16).expect("searcher");
+    let mut searcher = Searcher::new(0, &tables, threads, half, 1 << 16).expect("searcher");
     searcher.set_start_points(&points).expect("points");
     let outcome = searcher.launch(candidates).expect("launch");
 

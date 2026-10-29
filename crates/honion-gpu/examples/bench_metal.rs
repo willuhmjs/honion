@@ -63,7 +63,7 @@ fn main() {
     let tables = DeviceTables::build(&set);
 
     let t1 = Instant::now();
-    let mut s = match Searcher::new(&tables, threads, half, 4096) {
+    let mut s = match Searcher::new(0, &tables, threads, half, 4096) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("searcher construction failed: {e}");

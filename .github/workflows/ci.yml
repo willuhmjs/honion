@@ -53,6 +53,14 @@ jobs:
       # kIOGPUCommandBufferCallbackErrorHang — which is why CI failed in a
       # different place on almost every run. Serialising costs a little wall
       # clock and removes the contention rather than shrinking the tests.
+      # The Metal backend cannot run here, but it can be *compiled* here
+      # against the Apple target: signature drift like Searcher::new's device
+      # ordinal used to cost a macOS runner round-trip to surface.
+      - name: Check Metal backend compiles (cross)
+        run: |
+          rustup target add aarch64-apple-darwin
+          cargo check -p honion-gpu --all-targets --features metal --target aarch64-apple-darwin
+
       - name: Test workspace
         run: cargo test --release --workspace -- --test-threads=1
       - name: Clippy
@@ -78,6 +86,14 @@ jobs:
       # kIOGPUCommandBufferCallbackErrorHang — which is why CI failed in a
       # different place on almost every run. Serialising costs a little wall
       # clock and removes the contention rather than shrinking the tests.
+      # The Metal backend cannot run here, but it can be *compiled* here
+      # against the Apple target: signature drift like Searcher::new's device
+      # ordinal used to cost a macOS runner round-trip to surface.
+      - name: Check Metal backend compiles (cross)
+        run: |
+          rustup target add aarch64-apple-darwin
+          cargo check -p honion-gpu --all-targets --features metal --target aarch64-apple-darwin
+
       - name: Test workspace
         run: cargo test --release --workspace -- --test-threads=1
       - name: Clippy
