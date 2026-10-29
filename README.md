@@ -34,11 +34,29 @@ address unmodified.
 - An NVIDIA GPU, compute capability 5.0 or later
 - The NVIDIA driver and `libnvrtc` — **no CUDA toolkit needed**; device code is
   compiled at run time
-- Rust 1.85 or later
+- Rust 1.85 or later, to build from source
 
 ```
 cargo build --release
 ./target/release/honion --help
+```
+
+Or without a toolchain, in three flavours:
+
+```
+# prebuilt binary: grab honion-v*-linux-x86_64.tar.gz from Releases
+# straight from git (the workspace root is virtual, hence --bin):
+cargo install --git https://github.com/willuhmjs/honion --bin honion
+# container: needs the host nvidia-container-toolkit, nothing else
+docker run --rm --gpus all -v "$PWD/keys:/keys" ghcr.io/willuhmjs/honion \
+    search --prefix carroll --out /keys --count 1
+```
+
+Several GPUs at once need no extra flags — every device the driver sees gets
+a worker, one shared writer, combined rates:
+
+```
+honion search --prefix carroll --device all    # or --device 0,2
 ```
 
 ## Use

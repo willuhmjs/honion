@@ -389,7 +389,6 @@ dependencies = [
  "proptest",
  "sha3",
  "thiserror",
- "zeroize",
 ]
 
 [[package]]
@@ -403,7 +402,6 @@ dependencies = [
  "num-traits",
  "rand",
  "thiserror",
- "zeroize",
 ]
 
 [[package]]
