@@ -12,11 +12,13 @@
 //!   warns once with the actionable number and the search continues — this
 //!   is defence in depth, not a security boundary, and refusing to run on a
 //!   hardened-by-default distro would make the tool worse, not better.
-//! * `madvise(MADV_DONTDUMP)` keeps the pages out of core dumps, which is
-//!   where a crashed (or ptraced) process leaks to disk regardless of what
-//!   is in RAM. `mlock` alone does not help there, and `PR_SET_DUMPABLE 0`
-//!   would but also disables the profiling tools the benchmark docs depend
-//!   on — so that one lives behind `--paranoid`.
+//! * `madvise` keeps the pages out of core dumps, which is where a crashed
+//!   (or ptraced) process leaks to disk regardless of what is in RAM. Linux
+//!   says `MADV_DONTDUMP`; the same guarantee on macOS is
+//!   `MADV_COREDUMP_NOCOPY`. The whole-process escalation — `PR_SET_DUMPABLE 0`
+//!   on Linux, `PT_DENY_ATTACH` on macOS — additionally disables the
+//!   profiling tools the benchmark docs depend on, so it lives behind
+//!   `--paranoid`.
 //!
 //! The secrets themselves (`SecretScalar`) are already `ZeroizeOnDrop`, and
 //! they never reach device memory; this covers the gap between "zeroized on
@@ -52,29 +54,62 @@ pub fn lock_secret_buffer<T>(buf: &[T]) {
     // kernel only pins pages, it does not read or write them here.
     let rc = unsafe { libc::mlock(start as *const libc::c_void, len) };
     if rc == 0 {
-        // SAFETY: same address range; MADV_DONTDUMP changes a dump
-        // attribute only and is inert if unsupported.
-        unsafe {
-            libc::madvise(start as *mut libc::c_void, len, libc::MADV_DONTDUMP);
-        }
+        advise_no_dump(start as *mut libc::c_void, len);
     } else {
         warn_once(len);
     }
 }
 
-/// Exclude the whole process from core dumps (`PR_SET_DUMPABLE 0`).
+/// The madvise advice that excludes a range from core dumps, per platform.
+/// macOS's `MADV_COREDUMP_NOCOPY` is not yet in the `libc` crate's Apple
+/// table; the constant is xnu's `mach/madvneasy.h` value, and an unsupported
+/// kernel answers `EINVAL` to a request that is best-effort anyway.
+fn advise_no_dump(start: *mut libc::c_void, len: usize) {
+    #[cfg(target_os = "linux")]
+    // SAFETY: same address range; the advice changes a dump attribute only.
+    unsafe {
+        libc::madvise(start, len, libc::MADV_DONTDUMP);
+    }
+    #[cfg(target_os = "macos")]
+    // SAFETY: as above; MADV_COREDUMP_NOCOPY is xnu's value 23.
+    unsafe {
+        libc::madvise(start, len, 23);
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    let _ = (start, len); // no known advice on this platform; mlock still holds
+}
+
+/// Exclude the whole process from core dumps and debugger attach.
 ///
-/// This also blocks same-uid `ptrace`, which is what cuda-gdb and Nsight
-/// use — hence opt-in. A search run for days with a megabytes-sized buffer
-/// of secrets is the case where the trade is worth making; profiling is
-/// not that case.
+/// Linux clears `PR_SET_DUMPABLE`; macOS has no such flag and answers the
+/// same intent with `PT_DENY_ATTACH`. Either way this also blocks the
+/// attach path cuda-gdb, lldb and Nsight use — hence opt-in. A search run
+/// for days with a megabytes-sized buffer of secrets is the case where the
+/// trade is worth making; profiling is not that case.
 pub fn forbid_core_dump() {
+    #[cfg(target_os = "linux")]
     // SAFETY: prctl with PR_SET_DUMPABLE takes an int argument; a failed
     // call changes nothing.
-    let rc = unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0) };
-    if rc != 0 {
+    let outcome = unsafe { libc::prctl(libc::PR_SET_DUMPABLE, 0, 0, 0, 0) };
+    #[cfg(target_os = "macos")]
+    // SAFETY: PT_DENY_ATTACH takes no buffer arguments; a failed call
+    // changes nothing.
+    let outcome = unsafe {
+        libc::ptrace(
+            libc::PT_DENY_ATTACH,
+            0,
+            std::ptr::null_mut::<libc::c_char>(),
+            0,
+        )
+    };
+    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    let outcome = {
+        eprintln!("honion: --paranoid: unsupported platform; nothing was locked down");
+        0
+    };
+    if outcome != 0 {
         eprintln!(
-            "honion: --paranoid: could not clear PR_SET_DUMPABLE ({})",
+            "honion: --paranoid: could not disable core dumps/attach ({})",
             std::io::Error::last_os_error()
         );
     }
