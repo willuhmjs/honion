@@ -66,8 +66,16 @@ honion estimate --prefix carroll            # how long will this take?
 honion search   --prefix carroll --out ./keys --count 1
 honion search   --device all --prefix carroll --out ./keys   # every GPU
 honion search   --prefix carroll --suffix qad --out ./keys   # and an ending
+honion search   --out ./keys --resume                        # after a crash
 honion verify   ./keys/carroll…             # re-derive and check a result
 ```
+
+Every search checkpoints into its `--out` directory (patterns, elapsed time,
+counters) on each progress update; `--resume` continues without retyping the
+pattern, so Ctrl-C or a power cut costs one launch's statistics, never the
+run. The search is memoryless, so there is no key position to resume from —
+the checkpoint preserves the *run*, which is what multi-day searches actually
+lose.
 
 `--suffix` demands an ending; it costs no GPU throughput (the device filters
 on the prefix, the host checks the ending while verifying each hit — the

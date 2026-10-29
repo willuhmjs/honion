@@ -13,6 +13,10 @@ use std::time::{Duration, Instant};
 /// Accumulates and renders search progress.
 pub struct Progress {
     started: Instant,
+    /// Time credited from previous runs. Zero unless resuming a checkpoint;
+    /// the search is memoryless, so this is bookkeeping for the human, not
+    /// a position the search continues from.
+    elapsed_offset: Duration,
     examined: u64,
     found: usize,
     /// Base-2 log of the expected number of trials per hit.
@@ -26,8 +30,29 @@ impl Progress {
     pub fn new(difficulty_log2: f64, quiet: bool) -> Self {
         Self {
             started: Instant::now(),
+            elapsed_offset: Duration::ZERO,
             examined: 0,
             found: 0,
+            difficulty_log2,
+            quiet,
+        }
+    }
+
+    /// Continue tracking a search whose earlier runs spent `elapsed`
+    /// seconds, examined `examined` candidates and wrote `found` keys.
+    #[must_use]
+    pub fn resumed(
+        difficulty_log2: f64,
+        quiet: bool,
+        elapsed: Duration,
+        examined: u64,
+        found: usize,
+    ) -> Self {
+        Self {
+            started: Instant::now(),
+            elapsed_offset: elapsed,
+            examined,
+            found,
             difficulty_log2,
             quiet,
         }
@@ -51,10 +76,10 @@ impl Progress {
         self.found
     }
 
-    /// Time since the search began.
+    /// Time this `--out` has been searching, across every run it resumes.
     #[must_use]
     pub fn elapsed(&self) -> Duration {
-        self.started.elapsed()
+        self.started.elapsed() + self.elapsed_offset
     }
 
     /// Keys per second, averaged over the whole run.

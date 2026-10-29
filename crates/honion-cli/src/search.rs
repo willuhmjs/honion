@@ -9,12 +9,13 @@ use clap::Args;
 use honion_core::address::OnionAddress;
 use honion_core::pattern::{Pattern, PatternSet, SuffixPattern, SuffixSet};
 use honion_gpu::{DeviceTables, Searcher};
-use honion_keyfile::{SecretScalar, VerifiedKey, write_service_dir};
+use honion_keyfile::{SecretScalar, StoreError, VerifiedKey, write_service_dir};
 use rayon::prelude::*;
 
 use crate::patterns::{self, SourcedPattern};
 use crate::progress::{Progress, humantime, si};
 use crate::secure_mem;
+use crate::state::SearchState;
 
 /// Default number of precomputed offsets.
 ///
@@ -108,6 +109,17 @@ pub struct SearchArgs {
     /// Suppress progress output.
     #[arg(long, short)]
     quiet: bool,
+
+    /// Continue the checkpoint in --out: its patterns, elapsed time and
+    /// counters carry over, so a crash or Ctrl-C costs at most one launch's
+    /// statistics, never the run. Patterns may be omitted entirely.
+    #[arg(long)]
+    resume: bool,
+
+    /// Start a fresh run in --out even though it holds a checkpoint (the
+    /// checkpoint is left untouched until the first progress update).
+    #[arg(long)]
+    fresh: bool,
 
     /// Clear PR_SET_DUMPABLE for the whole process: no core dumps, and no
     /// same-uid ptrace either. The epoch scalars are already kept out of
@@ -221,10 +233,93 @@ pub fn run_search(args: &SearchArgs) -> Result<()> {
     if args.paranoid {
         secure_mem::forbid_core_dump();
     }
-    let sourced = collect(&args.prefixes, args.patterns_file.as_ref())?;
+    if args.resume && args.fresh {
+        bail!("--resume and --fresh contradict each other");
+    }
+    std::fs::create_dir_all(&args.out)
+        .with_context(|| format!("creating output directory {}", args.out.display()))?;
+
+    // Checkpoint resolution, before any parsing work is duplicated: the
+    // state file is *input like any other* -- its pattern strings go back
+    // through the grammar, and if the command line also names patterns they
+    // must agree, because silently searching different patterns than the
+    // checkpoint describes would corrupt the very counters --resume exists
+    // to preserve.
+    let prior = SearchState::load(&args.out)?;
+    if args.resume && prior.is_none() {
+        bail!(
+            "--resume: {} holds no checkpoint (looked for {})",
+            args.out.display(),
+            SearchState::path(&args.out).display()
+        );
+    }
+    if prior.is_some() && !args.resume && !args.fresh {
+        bail!(
+            "{} holds a checkpoint from an earlier run; use --resume to continue \
+             it or --fresh to start a new search here",
+            SearchState::path(&args.out).display()
+        );
+    }
+    let user_named_patterns =
+        !args.prefixes.is_empty() || args.patterns_file.is_some() || !args.suffixes.is_empty();
+    let (prefix_srcs, suffix_srcs) = if let Some(st) = &prior {
+        if args.resume && !user_named_patterns {
+            // The whole point: resume without retyping anything.
+            (st.prefixes.clone(), st.suffixes.clone())
+        } else if args.resume {
+            let given_p = collect(&args.prefixes, args.patterns_file.as_ref())?;
+            let given_p: Vec<&str> = given_p.iter().map(|s| s.pattern.source()).collect();
+            let same_patterns =
+                given_p == st.prefixes.iter().map(String::as_str).collect::<Vec<_>>();
+            if !(same_patterns && args.suffixes == st.suffixes) {
+                bail!(
+                    "the command line's patterns differ from the checkpoint in {}; \
+                     --resume continues those patterns, a new search belongs in a \
+                     new --out (or --fresh to overwrite the checkpoint here)",
+                    args.out.display()
+                );
+            }
+            (
+                given_p.iter().map(|s| (*s).to_owned()).collect(),
+                args.suffixes.clone(),
+            )
+        } else {
+            // --fresh: the checkpoint exists but the user explicitly chose
+            // to start over, so it is history, not input -- not compared.
+            (
+                collect(&args.prefixes, args.patterns_file.as_ref())?
+                    .iter()
+                    .map(|s| s.pattern.source().to_owned())
+                    .collect(),
+                args.suffixes.clone(),
+            )
+        }
+    } else if user_named_patterns {
+        (
+            collect(&args.prefixes, args.patterns_file.as_ref())?
+                .iter()
+                .map(|s| s.pattern.source().to_owned())
+                .collect(),
+            args.suffixes.clone(),
+        )
+    } else {
+        // No checkpoint, no patterns: the original error, original place.
+        collect(&args.prefixes, args.patterns_file.as_ref())?;
+        unreachable!("collect always bails on empty input")
+    };
+    let sourced = patterns::from_args(&prefix_srcs).context("parsing patterns")?;
+    if let Some(st) = &prior {
+        if args.resume && args.count != 0 && st.written as usize >= args.count {
+            bail!(
+                "the checkpoint already holds {} key(s) and --count is {};                  raise --count or start in a new --out",
+                st.written,
+                args.count
+            );
+        }
+    }
     let set = compile(&sourced)?;
     let tables = DeviceTables::build(&set);
-    let suffixes = parse_suffixes(&args.suffixes)?;
+    let suffixes = parse_suffixes(&suffix_srcs)?;
 
     // Refuse a hopeless configuration before allocating anything.
     tables
@@ -238,8 +333,6 @@ pub fn run_search(args: &SearchArgs) -> Result<()> {
         &args.device,
         honion_gpu::device_count().context("querying CUDA devices")?,
     )?;
-    std::fs::create_dir_all(&args.out)
-        .with_context(|| format!("creating output directory {}", args.out.display()))?;
 
     let difficulty = set.difficulty_log2() + suffixes.difficulty_log2();
     if !args.quiet {
@@ -269,8 +362,30 @@ pub fn run_search(args: &SearchArgs) -> Result<()> {
         );
     }
 
+    let progress = match &prior {
+        Some(st) if args.resume => Progress::resumed(
+            difficulty,
+            args.quiet,
+            std::time::Duration::from_secs_f64(st.elapsed_secs),
+            st.examined,
+            st.written as usize,
+        ),
+        _ => Progress::new(difficulty, args.quiet),
+    };
+    // What every checkpoint line must repeat; the counters come from the
+    // shared progress at save time.
+    let meta = SearchState {
+        prefixes: sourced
+            .iter()
+            .map(|s| s.pattern.source().to_owned())
+            .collect(),
+        suffixes: suffix_srcs.clone(),
+        elapsed_secs: 0.0,
+        examined: 0,
+        written: 0,
+    };
     let shared = Shared {
-        progress: Mutex::new(Progress::new(difficulty, args.quiet)),
+        progress: Mutex::new(progress),
         written: AtomicUsize::new(0),
         stop: AtomicBool::new(false),
         errors: Mutex::new(Vec::new()),
@@ -289,6 +404,7 @@ pub fn run_search(args: &SearchArgs) -> Result<()> {
             let set = &set;
             let tables = &tables;
             let suffixes = &suffixes;
+            let meta = &meta;
             std::thread::Builder::new()
                 .name(format!("honion-gpu{device}"))
                 // NVRTC compiles the kernel and the driver JITs the PTX on
@@ -297,7 +413,8 @@ pub fn run_search(args: &SearchArgs) -> Result<()> {
                 // gets; the main thread's 8 MiB never noticed.
                 .stack_size(WORKER_STACK_BYTES)
                 .spawn_scoped(scope, move || {
-                    if let Err(e) = search_device(device, args, set, tables, suffixes, shared) {
+                    if let Err(e) = search_device(device, args, set, tables, suffixes, meta, shared)
+                    {
                         // Report the whole context chain, then take the
                         // other workers down at their next launch boundary
                         // rather than letting them search for a result that
@@ -361,6 +478,7 @@ fn search_device(
     set: &PatternSet,
     tables: &DeviceTables,
     suffixes: &SuffixSet,
+    meta: &SearchState,
     shared: &Shared,
 ) -> Result<()> {
     // Sized to the card unless the user pinned it: throughput rises with
@@ -467,8 +585,26 @@ fn search_device(
                 continue;
             }
 
-            let dir = write_service_dir(&args.out, &verified)
-                .context("writing the hidden service directory")?;
+            let dir = match write_service_dir(&args.out, &verified) {
+                Ok(dir) => dir,
+                Err(StoreError::AlreadyExists { .. }) => {
+                    // The memoryless search can hand us a key whose
+                    // directory a previous run wrote; a resumed run will
+                    // find its own hits again at low probability. Skip and
+                    // keep searching -- the key exists on disk already,
+                    // which is what --count ultimately counts.
+                    if !args.quiet {
+                        eprintln!(
+                            "  {} already exists; skipping",
+                            verified.address().to_hostname()
+                        );
+                    }
+                    continue;
+                }
+                Err(e) => {
+                    return Err(e).context("writing the hidden service directory");
+                }
+            };
             let total = shared.written.fetch_add(1, Ordering::SeqCst) + 1;
             println!("{}", verified.address().to_hostname());
             if !args.quiet {
@@ -488,6 +624,11 @@ fn search_device(
                         outcome.examined,
                         outcome.hits.len().saturating_sub(suffix_skips),
                     );
+                let progress = shared
+                    .progress
+                    .lock()
+                    .expect("the progress counter was poisoned");
+                save_checkpoint(args, meta, &progress);
                 shared.stop.store(true, Ordering::Relaxed);
                 return Ok(());
             }
@@ -503,6 +644,7 @@ fn search_device(
                 outcome.hits.len().saturating_sub(suffix_skips),
             );
             progress.report();
+            save_checkpoint(args, meta, &progress);
         }
 
         // Hand the prepared epoch to the device and keep its scalars, which
@@ -519,6 +661,29 @@ fn search_device(
             let per_candidate = launch_time / f64::from(candidates);
             let want = (args.launch_seconds / per_candidate).round();
             candidates = want.clamp(1.0, f64::from(u32::MAX / 2)) as u32;
+        }
+    }
+}
+
+/// Write the checkpoint for `--out`. Failures warn and never stop a
+/// running search: the statistics are a courtesy, the keys on disk are the
+/// product, and killing a working two-week run over an unreadable directory
+/// would be the checkpoint causing the loss it exists to prevent.
+fn save_checkpoint(args: &SearchArgs, meta: &SearchState, progress: &Progress) {
+    let state = SearchState {
+        prefixes: meta.prefixes.clone(),
+        suffixes: meta.suffixes.clone(),
+        elapsed_secs: progress.elapsed().as_secs_f64(),
+        examined: progress.examined(),
+        // Progress is seeded from the checkpoint on --resume, so its
+        // count is cumulative across runs; `shared.written` is only this
+        // process's, which would make a resumed checkpoint *forget* the
+        // keys earlier runs wrote.
+        written: progress.found() as u64,
+    };
+    if let Err(e) = state.save(&args.out, &args.device) {
+        if !args.quiet {
+            eprintln!("honion: could not write the checkpoint: {e:#}");
         }
     }
 }
