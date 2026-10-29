@@ -24,9 +24,11 @@
 
 pub mod compile;
 pub mod parse;
+pub mod suffix;
 
 pub use compile::{
     CompiledPattern, MaskGroup, PREFILTER_BYTES, PREFILTER_CHARS, PatternSet, PatternSetError,
     ResidualPosition, char_value, key_prefix_u64,
 };
 pub use parse::{Atom, ByteContext, CharClass, MAX_PATTERN_ATOMS, Pattern, PatternError};
+pub use suffix::{SuffixError, SuffixPattern, SuffixSet};

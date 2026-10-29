@@ -129,3 +129,33 @@ This happens when a pattern's fixed characters all sit past position 12, or when
 it is mostly wildcards and character classes; anchoring more literal characters
 near the start fixes it.
 ```
+
+## Endings: `--suffix`
+
+The grammar above describes atoms; anchoring them at the end of the address
+is a matter of position, not a second language. `--suffix` parses through
+the same recogniser and re-anchors atom `i` to address character
+`56 - len + i`.
+
+What the ending can demand is capped by arithmetic, not by taste (see
+`00-onion-v3-address-spec.md` for why):
+
+| position | content | a literal costs | possible characters |
+|---|---|---|---|
+| ≤ 50 | public key | 5 bits | all 32 |
+| 51–53 | sign bit, checksum | 5 bits | all 32 |
+| 54 | 2 checksum bits + 3 fixed zeros | 2 bits | `a`, `i`, `q`, `y` |
+| 55 | `VERSION` byte | 0 bits | `d`, always |
+
+Consequences the parser enforces at recognition time: every address ends in
+`d`, so `--suffix x` is refused, not searched; the character before it is one
+of four, so `--suffix lock` is refused with the position and the rule that
+fails it; and `--suffix zzad` is priced at twelve bits, which is why endings
+are far cheaper to get than the 32-per-character rule suggests.
+
+Enforcement lives on the host: positions 52–55 depend on the SHA3-256
+checksum, the kernel never computes one, and a suffix cannot feed the device
+prefilter — which is also why `--suffix` without a `--prefix` is refused.
+Prefix hits whose ending fails are discarded in the verification pass that
+already computes the checksum, costing throughput nothing; the difficulty
+model adds the suffix's bits, so `P(found)` stays honest.

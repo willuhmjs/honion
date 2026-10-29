@@ -65,8 +65,17 @@ honion search --prefix carroll --device all    # or --device 0,2
 honion estimate --prefix carroll            # how long will this take?
 honion search   --prefix carroll --out ./keys --count 1
 honion search   --device all --prefix carroll --out ./keys   # every GPU
+honion search   --prefix carroll --suffix qad --out ./keys   # and an ending
 honion verify   ./keys/carroll…             # re-derive and check a result
 ```
+
+`--suffix` demands an ending; it costs no GPU throughput (the device filters
+on the prefix, the host checks the ending while verifying each hit — the
+checksum it needs is computed there anyway). The last two characters of every
+address are structure, not luck: they are always `_ [aiqy] d`, so a
+four-character ending costs 12 bits, not 20 — and endings like `lock` are
+impossible, which `honion` tells you at parse time rather than searching
+forever.
 
 Patterns are base32 characters (`a`–`z`, `2`–`7`), `?` for any character, and
 `[abc]` / `[^abc]` for a choice. Repeat `--prefix`, or pass

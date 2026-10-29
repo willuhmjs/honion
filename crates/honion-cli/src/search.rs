@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use anyhow::{Context, Result, bail};
 use clap::Args;
 use honion_core::address::OnionAddress;
-use honion_core::pattern::{Pattern, PatternSet};
+use honion_core::pattern::{Pattern, PatternSet, SuffixPattern, SuffixSet};
 use honion_gpu::{DeviceTables, Searcher};
 use honion_keyfile::{SecretScalar, VerifiedKey, write_service_dir};
 use rayon::prelude::*;
@@ -48,6 +48,18 @@ pub struct SearchArgs {
     /// `[abc]` or `[^abc]` for a choice. It matches the start of the address.
     #[arg(long = "prefix", value_name = "PATTERN")]
     prefixes: Vec<String>,
+
+    /// Ending the address must have. May be repeated; a candidate then needs
+    /// the prefix *and* any one of these endings.
+    ///
+    /// Suffix characters at the very end of the address are part of the
+    /// SHA3 checksum or the fixed version byte, which the search kernel does
+    /// not compute; they are checked on the host while verifying each
+    /// prefix hit. They cost no search throughput, and the difficulty model
+    /// prices them accordingly: every address ends in 'd', the character
+    /// before it is one of a, i, q, y, and only the rest cost 5 bits each.
+    #[arg(long = "suffix", value_name = "PATTERN")]
+    suffixes: Vec<String>,
 
     /// File of patterns, one per line; `#` comments and blank lines ignored.
     #[arg(long, value_name = "FILE")]
@@ -104,6 +116,10 @@ pub struct EstimateArgs {
     #[arg(long = "prefix", value_name = "PATTERN")]
     prefixes: Vec<String>,
 
+    /// Ending to estimate. May be repeated.
+    #[arg(long = "suffix", value_name = "PATTERN")]
+    suffixes: Vec<String>,
+
     /// File of patterns, one per line.
     #[arg(long, value_name = "FILE")]
     patterns_file: Option<PathBuf>,
@@ -124,7 +140,10 @@ fn collect(prefixes: &[String], file: Option<&PathBuf>) -> Result<Vec<SourcedPat
         all.extend(patterns::from_file(path)?);
     }
     if all.is_empty() {
-        bail!("no patterns given; use --prefix or --patterns-file");
+        bail!(
+            "no patterns given; use --prefix or --patterns-file (a --suffix alone \
+             cannot be searched: only prefixes reach the device prefilter)",
+        );
     }
     Ok(all)
 }
@@ -193,6 +212,7 @@ pub fn run_search(args: &SearchArgs) -> Result<()> {
     let sourced = collect(&args.prefixes, args.patterns_file.as_ref())?;
     let set = compile(&sourced)?;
     let tables = DeviceTables::build(&set);
+    let suffixes = parse_suffixes(&args.suffixes)?;
 
     // Refuse a hopeless configuration before allocating anything.
     tables
@@ -209,7 +229,7 @@ pub fn run_search(args: &SearchArgs) -> Result<()> {
     std::fs::create_dir_all(&args.out)
         .with_context(|| format!("creating output directory {}", args.out.display()))?;
 
-    let difficulty = set.difficulty_log2();
+    let difficulty = set.difficulty_log2() + suffixes.difficulty_log2();
     if !args.quiet {
         eprintln!(
             "honion: searching for {} pattern(s) on {} device(s)",
@@ -222,6 +242,13 @@ pub fn run_search(args: &SearchArgs) -> Result<()> {
                 s.pattern.source(),
                 s.pattern.difficulty_log2(),
                 s.origin
+            );
+        }
+        for s in suffixes.patterns() {
+            eprintln!(
+                "  ends with {} ({:.1} bits, from --suffix)",
+                s.source(),
+                s.difficulty_log2()
             );
         }
         eprintln!(
@@ -249,6 +276,7 @@ pub fn run_search(args: &SearchArgs) -> Result<()> {
             let shared = &shared;
             let set = &set;
             let tables = &tables;
+            let suffixes = &suffixes;
             std::thread::Builder::new()
                 .name(format!("honion-gpu{device}"))
                 // NVRTC compiles the kernel and the driver JITs the PTX on
@@ -257,7 +285,7 @@ pub fn run_search(args: &SearchArgs) -> Result<()> {
                 // gets; the main thread's 8 MiB never noticed.
                 .stack_size(WORKER_STACK_BYTES)
                 .spawn_scoped(scope, move || {
-                    if let Err(e) = search_device(device, args, set, tables, shared) {
+                    if let Err(e) = search_device(device, args, set, tables, suffixes, shared) {
                         // Report the whole context chain, then take the
                         // other workers down at their next launch boundary
                         // rather than letting them search for a result that
@@ -320,6 +348,7 @@ fn search_device(
     args: &SearchArgs,
     set: &PatternSet,
     tables: &DeviceTables,
+    suffixes: &SuffixSet,
     shared: &Shared,
 ) -> Result<()> {
     // Sized to the card unless the user pinned it: throughput rises with
@@ -397,6 +426,12 @@ fn search_device(
         // is allowed to become a file. Each worker checks its own device's
         // claims against its own scalars; one device's hit can never be
         // reconstructed from another's starting point.
+        // Claims whose prefix matched but whose suffix did not. These are
+        // expected noise — the suffix is priced into the difficulty and
+        // costs this claim its write, nothing more — but they must not be
+        // counted as found, or P(found) would claim keys that were never
+        // written.
+        let mut suffix_skips = 0usize;
         for hit in &outcome.hits {
             let Some(start) = scalars.get(hit.thread_id as usize) else {
                 bail!(
@@ -415,6 +450,11 @@ fn search_device(
                     )
                 })?;
 
+            if !suffixes.matches_any(verified.address().body()) {
+                suffix_skips += 1;
+                continue;
+            }
+
             let dir = write_service_dir(&args.out, &verified)
                 .context("writing the hidden service directory")?;
             let total = shared.written.fetch_add(1, Ordering::SeqCst) + 1;
@@ -432,7 +472,10 @@ fn search_device(
                     .progress
                     .lock()
                     .expect("the progress counter was poisoned")
-                    .record(outcome.examined, outcome.hits.len());
+                    .record(
+                        outcome.examined,
+                        outcome.hits.len().saturating_sub(suffix_skips),
+                    );
                 shared.stop.store(true, Ordering::Relaxed);
                 return Ok(());
             }
@@ -443,7 +486,10 @@ fn search_device(
                 .progress
                 .lock()
                 .expect("the progress counter was poisoned");
-            progress.record(outcome.examined, outcome.hits.len());
+            progress.record(
+                outcome.examined,
+                outcome.hits.len().saturating_sub(suffix_skips),
+            );
             progress.report();
         }
 
@@ -465,6 +511,17 @@ fn search_device(
     }
 }
 
+/// Parse `--suffix` arguments. Same discipline as prefixes (langsec rule 2):
+/// all are recognised before any search starts, and the first malformed or
+/// structurally impossible ending aborts the run.
+fn parse_suffixes(args: &[String]) -> Result<SuffixSet> {
+    let mut out = Vec::with_capacity(args.len());
+    for src in args {
+        out.push(SuffixPattern::parse(src).with_context(|| format!("--suffix {src:?}"))?);
+    }
+    Ok(SuffixSet::new(out))
+}
+
 /// Compile a pattern set from sourced patterns.
 fn compile(sourced: &[SourcedPattern]) -> Result<PatternSet> {
     let list: Vec<Pattern> = sourced.iter().map(|s| s.pattern.clone()).collect();
@@ -480,6 +537,7 @@ pub fn run_estimate(args: &EstimateArgs) -> Result<()> {
     let sourced = collect(&args.prefixes, args.patterns_file.as_ref())?;
     let set = compile(&sourced)?;
     let tables = DeviceTables::build(&set);
+    let suffixes = parse_suffixes(&args.suffixes)?;
 
     println!("patterns: {}", sourced.len());
     for s in &sourced {
@@ -491,7 +549,18 @@ pub fn run_estimate(args: &EstimateArgs) -> Result<()> {
             s.origin,
         );
     }
-    let d = set.difficulty_log2();
+    if !suffixes.patterns().is_empty() {
+        println!("endings: {}", suffixes.patterns().len());
+        for s in suffixes.patterns() {
+            println!(
+                "  {:<24} {:>6.1} bits  expected {:>10}   [--suffix]",
+                s.source(),
+                s.difficulty_log2(),
+                humantime(2f64.powf(s.difficulty_log2()) / args.rate),
+            );
+        }
+    }
+    let d = set.difficulty_log2() + suffixes.difficulty_log2();
     println!();
     println!(
         "combined difficulty : {d:.1} bits ({} expected trials)",
