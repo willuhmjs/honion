@@ -1,0 +1,8 @@
+# NVRTC compiles the device kernel on the calling thread, and its stack use
+# exceeds the 8 MiB default that the test harness gives each `#[test]`. The
+# CLI already runs every device worker on a 64 MiB stack for the same reason
+# (`WORKER_STACK_BYTES` in honion-cli); `RUST_MIN_STACK` extends the same
+# allowance to test threads. Measured against driver 615.78, which overflowed
+# the default.
+[env]
+RUST_MIN_STACK = "67108864"
